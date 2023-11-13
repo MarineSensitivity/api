@@ -12,7 +12,7 @@
 
 library(plumber)
 
-#* @apiTitle MarineSensitivites Custom API
+#* @apiTitle MarineSensitivity Custom API
 
 # /echo ----
 #* Echo back the input
