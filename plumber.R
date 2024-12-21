@@ -23,6 +23,9 @@ function(
     schema.table = "raw.mr_eez",
     where        = "mrgid = 8442"){
 
+  # schema.table = "public.ply_ecoareas"
+  # where        = "ecoarea_key = 'erCAC-paCEC'"
+
   schema <- str_split(schema.table, fixed("."))[[1]][1]
   table  <- str_split(schema.table, fixed("."))[[1]][2]
 
@@ -35,7 +38,7 @@ function(
         f_table_schema = '{schema}' AND
         f_table_name   = '{table}';")) |>
     pull(f_geometry_column)
-  message(glue("schema.table: '{schema}.{table}'; fld_geom: '{fld_geom}'"))
+  # message(glue("schema.table: '{schema}.{table}'; fld_geom: '{fld_geom}'"))
 
   q <- glue("
     WITH
@@ -53,6 +56,7 @@ function(
         aquamaps.cells c
         INNER JOIN {table} a
           ON ST_Intersects(c.geom, a.{fld_geom})
+            AND NOT ST_Touches(c.geom, a.{fld_geom})
       WHERE
         a.{where}
       ORDER BY
@@ -87,7 +91,7 @@ function(
     FROM
       g
       LEFT JOIN aquamaps.spp USING (sp_key)")
-  message(q)
+  # message(q)
 
   dbGetQuery(con, q)
 }
