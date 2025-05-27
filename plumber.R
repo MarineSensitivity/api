@@ -1,6 +1,7 @@
 library(dplyr)
 library(glue)
 library(here)
+library(httr2)
 library(plumber)
 library(stringr)
 
@@ -96,6 +97,62 @@ function(
   dbGetQuery(con, q)
 }
 
+# /tilejson ----
+#* Generate tilejson for a given table from pg_tileserv endpoint
+#* @param table The table name (e.g., "public.ply_planareas_2025")
+#* @serializer unboxedJSON
+#* @get /tilejson
+function(table = "public.ply_planareas_2025") {
+
+  base_url     <- "https://tile.marinesensitivity.org"
+  endpoint_url <- glue("{base_url}/{table}.json")
+
+  # fetch data from pg_tileserv endpoint
+  j <- request(endpoint_url) |>
+    req_perform() |>
+    resp_body_json()
+
+  # convert postgres types to tilejson types
+  convert_pg_type <- function(pg_type) {
+    switch(pg_type,
+      "text"    = "String",
+      "varchar" = "String",
+      "char"    = "String",
+      "float8"  = "Number",
+      "float4"  = "Number",
+      "numeric" = "Number",
+      "int4"    = "Number",
+      "int8"    = "Number",
+      "bool"    = "Boolean",
+      "String" ) } # default
+
+  # build fields object from properties
+  fields <- j$properties |>
+    setNames(sapply(j$properties, function(x) x$name)) |>
+    lapply(function(prop) convert_pg_type(prop$type))
+
+  # construct tilejson response
+  tj <- list(
+    tilejson      = "3.0.0",
+    name          = paste("Tiles for", table),
+    description   = paste("Vector tiles for", table, "from MarineSensitivity tile server"),
+    version       = "1.0.0",
+    attribution   = "(c) EcoQuants contributors, CC-BY-SA",
+    scheme        = "xyz",
+    tiles         = list(j$tileurl),
+    minzoom       = j$minzoom,
+    maxzoom       = j$maxzoom,
+    bounds        = j$bounds,
+    center        = j$center,
+    vector_layers = list(list(
+      id          = table,
+      description = paste("Layer for", table),
+      fields      = fields ) ) )
+
+  jsonlite::toJSON(tj, auto_unbox = TRUE, pretty = TRUE, null = "null", force = TRUE)
+
+  return(tj)
+}
 
 # /echo ----
 #* Echo back the input

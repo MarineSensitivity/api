@@ -1,0 +1,23 @@
+{
+  "tilejson": "3.0.0",
+  "name": "Test tilejson",
+  "description": "test source",
+  "version": "1.0.0",
+  "attribution": "(c) EcoQuants contributors, CC-BY-SA",
+  "scheme": "xyz",
+  "tiles": ["https://tile.marinesensitivity.org/public.ply_planareas_2025/{z}/{x}/{y}.pbf"],
+  "minzoom": 0,
+  "maxzoom": 22,
+  "bounds": [-179.9999885, -17.555, 179.9999885, 82.4773765],
+  "center": [-1.4210854715202e-14, 32.46118825],
+  "vector_layers": [{
+    "id": "public.ply_planareas_2025",
+    "description": "test layer",
+    "fields": {
+      "region_key": "String",
+      "region_name": "String",
+      "planarea_key": "String",
+      "planarea_name": "String",
+      "ctr_lon": "Number",
+      "ctr_lat": "Number",
+      "area_km2": "Number" } }] }
