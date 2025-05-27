@@ -9,6 +9,12 @@ source(here("../workflows/libs/db.R")) # define: con
 
 #* @apiTitle MarineSensitivity Custom API
 
+#* @filter cors
+cors <- function(res) {
+  res$setHeader("Access-Control-Allow-Origin", "*")
+  plumber::forward()
+}
+
 # /species_by_feature ----
 #* Output a table of species present from one or more spatial feature(s)
 #* - The output is in comma-separated format (*.csv).
