@@ -1,5 +1,5 @@
 
-## 2025-05-27.a 
+## 2025-05-27.a add /tilejson endpoint to plumber API
 
 Add an API endpoint `/tilejson` with R [plumber](https://www.rplumber.io) to @plumber.R 
 that accepts a table name (e.g., "public.ply_planareas_2025") as the input 
