@@ -106,12 +106,15 @@ function(
 # /tilejson ----
 #* Generate tilejson for a given table from pg_tileserv endpoint
 #* @param table The table name (e.g., "public.ply_planareas_2025")
+#* @param use_cache boolean indicating whether to use the cache (default: TRUE)
 #* @serializer unboxedJSON
 #* @get /tilejson
-function(table = "public.ply_planareas_2025") {
+function(table = "public.ply_planareas_2025", use_cache = T) {
 
-  # base_url     <- "https://tile.marinesensitivity.org"
-  base_url     <- "https://tilecache.marinesensitivity.org"
+  base_url <- ifelse(
+    use_cache,
+    "https://tilecache.marinesensitivity.org",
+    "https://tile.marinesensitivity.org/tileserv")
   endpoint_url <- glue("{base_url}/{table}.json")
 
   # fetch data from pg_tileserv endpoint
