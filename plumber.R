@@ -110,7 +110,8 @@ function(
 #* @get /tilejson
 function(table = "public.ply_planareas_2025") {
 
-  base_url     <- "https://tile.marinesensitivity.org"
+  # base_url     <- "https://tile.marinesensitivity.org"
+  base_url     <- "https://tilecache.marinesensitivity.org"
   endpoint_url <- glue("{base_url}/{table}.json")
 
   # fetch data from pg_tileserv endpoint
