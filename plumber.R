@@ -126,7 +126,7 @@ function(table = "public.ply_planareas_2025", filter = NULL, use_cache = T) {
 
   # add filter to the end of j$tileurl
   if (!is.null(filter))
-    j$tileurl <- paste0(j$tileurl, "?filter=", filter)
+    j$tileurl <- paste0(j$tileurl, "?filter=", URLencode("region_key = 'AK'") )
 
   # convert postgres types to tilejson types
   convert_pg_type <- function(pg_type) {
