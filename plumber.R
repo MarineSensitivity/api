@@ -114,7 +114,7 @@ function(table = "public.ply_planareas_2025", filter = NULL, use_cache = T) {
   # table = "public.ply_planareas_2025"; use_cache = F
 
   base_url <- ifelse(
-    use_cache,
+    as.logical(use_cache),
     "https://tilecache.marinesensitivity.org",
     "https://tile.marinesensitivity.org")
   endpoint_url <- glue("{base_url}/{table}.json")
