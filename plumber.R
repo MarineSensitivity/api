@@ -106,10 +106,11 @@ function(
 # /tilejson ----
 #* Generate tilejson for a given table from pg_tileserv endpoint
 #* @param table The table name (e.g., "public.ply_planareas_2025")
+#* @param filter Filter using [CQL](https://github.com/CrunchyData/pg_tileserv?tab=readme-ov-file#table-tile-request-customization) `filter=`
 #* @param use_cache boolean indicating whether to use the cache (default: TRUE)
 #* @serializer unboxedJSON
 #* @get /tilejson
-function(table = "public.ply_planareas_2025", use_cache = T) {
+function(table = "public.ply_planareas_2025", filter = NULL, use_cache = T) {
   # table = "public.ply_planareas_2025"; use_cache = F
 
   base_url <- ifelse(
@@ -122,6 +123,10 @@ function(table = "public.ply_planareas_2025", use_cache = T) {
   j <- request(endpoint_url) |>
     req_perform() |>
     resp_body_json()
+
+  # add filter to the end of j$tileurl
+  if (!is.null(filter))
+    j$tileurl <- paste0(j$tileurl, "?filter=", filter)
 
   # convert postgres types to tilejson types
   convert_pg_type <- function(pg_type) {
