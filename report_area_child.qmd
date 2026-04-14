@@ -1,0 +1,26 @@
+### `r ad$label`
+
+```{r}
+#| eval: !expr identical(section, "scores")
+if (is_html) {
+  msens::plot_flower(
+    ad$scores,
+    fld_category = component,
+    fld_height   = score,
+    fld_width    = even,
+    interactive  = TRUE,
+    title        = ad$label)
+} else {
+  msens::ggplot_flower(
+    ad$scores,
+    fld_category = component,
+    fld_height   = score,
+    fld_width    = even,
+    title        = ad$label)
+}
+```
+
+```{r}
+#| eval: !expr identical(section, "species")
+msens::tbl_species(ad$spp, interactive = is_html)
+```

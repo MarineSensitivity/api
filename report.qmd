@@ -1,0 +1,163 @@
+---
+title: "`r params$title`"
+date: now
+date-format: "YYYY-MM-DD HH:mm"
+params:
+  title:      "BOEM Marine Sensitivity Report"
+  areas_json: "[]"
+  ver:        "v6"
+  format:     "html"
+format:
+  html:
+    toc: true
+    smooth-scroll: true
+    embed-resources: true
+  pdf:
+    toc: true
+    number-sections: true
+    colorlinks: true
+    lof: true
+    lot: true
+  docx:
+    reference-doc: "../workflows/libs/ESP Report Template 2025_1 tech.docx"
+    toc: true
+    toc-depth: 2
+    lof: true
+    lot: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+suppressPackageStartupMessages({
+  library(msens)
+  library(sf)
+  library(dplyr)
+  library(terra)
+  library(purrr)
+  library(jsonlite)
+  library(yaml)
+  library(knitr)
+})
+
+is_html <- params$format == "html"
+
+areas <- jsonlite::fromJSON(params$areas_json, simplifyVector = FALSE)
+if (length(areas) == 0) {
+  stop("No areas provided. Pass `areas_json` as a JSON array of ",
+       '[{"label":..,"kind":"wkt"|"pra","value":..}].')
+}
+
+area_to_sf <- function(a) {
+  if (a$kind == "pra") {
+    msens::ply_planareas |>
+      dplyr::filter(planarea_key == a$value) |>
+      sf::st_geometry() |>
+      sf::st_as_sf()
+  } else {
+    sf::st_as_sfc(a$value, crs = 4326) |>
+      sf::st_as_sf()
+  }
+}
+
+areas_sf  <- purrr::map(areas, area_to_sf)
+areas_lbl <- purrr::map_chr(areas, "label")
+
+con       <- msens::sdm_db_con(version = params$ver, read_only = TRUE)
+r_cell_id <- msens::cell_id_raster()[["cell_id"]]
+
+areas_data <- purrr::pmap(list(areas_sf, areas_lbl), function(ply, lbl) {
+  cells <- msens::cells_in_polygon(ply, r_cell_id)
+  list(
+    label  = lbl,
+    ply    = ply,
+    cells  = cells,
+    scores = msens::scores_for_cells(con, cells),
+    spp    = msens::species_for_cells(con, cells))
+})
+
+# combined sf used by the Map section
+all_areas <- do.call(
+  rbind,
+  purrr::imap(areas_sf, ~ dplyr::mutate(.x, label = areas_lbl[[.y]])))
+```
+
+## Parameters
+
+```{r}
+#| label: print-params
+cat(yaml::as.yaml(list(
+  title  = params$title,
+  ver    = params$ver,
+  format = params$format,
+  n_areas = length(areas),
+  areas  = purrr::map(areas_data, ~ list(
+    label      = .x$label,
+    kind       = areas[[which(areas_lbl == .x$label)[1]]]$kind,
+    n_cells    = nrow(.x$cells),
+    mean_score = round(msens::mean_score(.x$scores), 1)))
+)))
+```
+
+## Map
+
+```{r}
+#| label: map-html
+#| eval: !expr is_html
+# mapgl::maplibre() is used instead of mapboxgl(), which does not
+# render inside Quarto documents (walkerke/mapgl#3).
+mapgl::maplibre(
+  bounds = sf::st_bbox(all_areas)
+) |>
+  mapgl::add_fill_layer(
+    id           = "areas",
+    source       = all_areas,
+    fill_color   = "#3388ff",
+    fill_opacity = 0.4,
+    tooltip      = "label")
+```
+
+```{r}
+#| label: map-static
+#| eval: !expr '!is_html'
+#| fig-cap: "Areas of interest."
+msens::ggmap_areas(all_areas)
+```
+
+```{r}
+#| label: scores-header
+#| output: asis
+cat("## Plot of Scores\n\n")
+if (is_html) cat("::: {.panel-tabset}\n\n")
+res <- purrr::map_chr(areas_data, function(ad) {
+  knitr::knit_child(
+    "report_area_child.qmd",
+    envir  = rlang::env(ad = ad, section = "scores", is_html = is_html),
+    quiet  = TRUE)
+})
+cat(res, sep = "\n")
+if (is_html) cat("\n:::\n")
+```
+
+```{r}
+#| label: species-header
+#| output: asis
+cat("\n## Table of Species\n\n")
+if (is_html) cat("::: {.panel-tabset}\n\n")
+res <- purrr::map_chr(areas_data, function(ad) {
+  knitr::knit_child(
+    "report_area_child.qmd",
+    envir  = rlang::env(ad = ad, section = "species", is_html = is_html),
+    quiet  = TRUE)
+})
+cat(res, sep = "\n")
+if (is_html) cat("\n:::\n")
+```
+
+```{r}
+#| include: false
+DBI::dbDisconnect(con, shutdown = TRUE)
+```

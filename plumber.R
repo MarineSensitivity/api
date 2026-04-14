@@ -248,10 +248,18 @@ function(req, res) {
     "https://file.marinesensitivity.org/reports/", key, ".", ext)
 
   if (!file.exists(out_file)) {
-    src <- "/share/github/MarineSensitivity/apps"
+    src <- here()
     tmp <- tempfile("rpt_"); dir.create(tmp)
-    for (f in c("report.qmd", "report_area_child.qmd"))
-      file.copy(file.path(src, f), file.path(tmp, f))
+    for (f in c("report.qmd", "report_area_child.qmd")) {
+      src_f <- file.path(src, f)
+      if (!file.exists(src_f)) {
+        res$status <- 500
+        return(list(error = glue(
+          "missing report source: {src_f} — ",
+          "pull the api repo on the server")))
+      }
+      file.copy(src_f, file.path(tmp, f))
+    }
 
     tryCatch(
       quarto::quarto_render(
