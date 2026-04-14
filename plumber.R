@@ -1,8 +1,11 @@
+library(digest)
 library(dplyr)
 library(glue)
 library(here)
 library(httr2)
+library(jsonlite)
 library(plumber)
+library(quarto)
 library(stringr)
 
 source(here("../workflows/libs/db.R")) # define: con
@@ -195,6 +198,81 @@ function(){
 #* @post /sum
 function(a, b){
   as.numeric(a) + as.numeric(b)
+}
+
+# /report ----
+#* Render a parameterized msens report and return a link to the output
+#*
+#* Expects a JSON body with fields:
+#*   - `title` report title (character)
+#*   - `ver` data version (e.g. "v6")
+#*   - `format` one of "html", "pdf", "docx"
+#*   - `areas` array of `{label, kind: "wkt"|"pra", value}`
+#*
+#* Responses are cached by a hash of the inputs at
+#* `/share/public/reports/<hash>.<ext>` and served from
+#* `https://file.marinesensitivity.org/reports/<hash>.<ext>`.
+#* @serializer unboxedJSON
+#* @post /report
+function(req, res) {
+  body <- tryCatch(
+    jsonlite::fromJSON(req$postBody, simplifyVector = FALSE),
+    error = function(e) NULL)
+  if (is.null(body)) {
+    res$status <- 400
+    return(list(error = "invalid JSON body"))
+  }
+
+  title  <- body$title  %||% "BOEM Marine Sensitivity Report"
+  ver    <- body$ver    %||% "v6"
+  format <- body$format %||% "html"
+  areas  <- body$areas  %||% list()
+
+  if (!format %in% c("html", "pdf", "docx")) {
+    res$status <- 400
+    return(list(error = glue("unsupported format: {format}")))
+  }
+  if (length(areas) == 0) {
+    res$status <- 400
+    return(list(error = "areas must be a non-empty list"))
+  }
+
+  areas_json <- jsonlite::toJSON(areas, auto_unbox = TRUE)
+  ext <- c(html = "html", pdf = "pdf", docx = "docx")[[format]]
+  key <- digest::digest(list(title, areas_json, ver, format))
+
+  out_dir  <- "/share/public/reports"
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  out_file <- file.path(out_dir, paste0(key, ".", ext))
+  url_out  <- paste0(
+    "https://file.marinesensitivity.org/reports/", key, ".", ext)
+
+  if (!file.exists(out_file)) {
+    src <- "/share/github/MarineSensitivity/apps"
+    tmp <- tempfile("rpt_"); dir.create(tmp)
+    for (f in c("report.qmd", "report_area_child.qmd"))
+      file.copy(file.path(src, f), file.path(tmp, f))
+
+    tryCatch(
+      quarto::quarto_render(
+        input          = file.path(tmp, "report.qmd"),
+        output_format  = format,
+        execute_params = list(
+          title      = title,
+          areas_json = areas_json,
+          ver        = ver,
+          format     = format)),
+      error = function(e) {
+        res$status <<- 500
+        stop(glue("quarto_render failed: {conditionMessage(e)}"))
+      })
+
+    file.copy(
+      file.path(tmp, paste0("report.", ext)),
+      out_file, overwrite = TRUE)
+  }
+
+  list(url = url_out)
 }
 
 # / home ----
