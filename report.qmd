@@ -51,10 +51,24 @@ if (length(areas) == 0) {
        '[{"label":..,"kind":"wkt"|"pra","value":..}].')
 }
 
+# Program Area polygons: read the versioned gpkg matching params$ver —
+# same source used to build the public pmtiles, but without tile
+# fragmentation issues.
+dir_data <- switch(
+  Sys.info()[["sysname"]],
+  "Darwin" = "~/My Drive/projects/msens/data",
+  "Linux"  = "/share/data")
+pra_gpkg <- file.path(
+  dir_data, "derived", params$ver,
+  paste0("ply_programareas_2026_", params$ver, ".gpkg"))
+ply_pra <- if (any(purrr::map_chr(areas, "kind") == "pra")) {
+  sf::st_read(pra_gpkg, quiet = TRUE)
+}
+
 area_to_sf <- function(a) {
   if (a$kind == "pra") {
-    msens::ply_planareas |>
-      dplyr::filter(planarea_key == a$value) |>
+    ply_pra |>
+      dplyr::filter(programarea_key == a$value) |>
       sf::st_geometry() |>
       sf::st_as_sf()
   } else {
