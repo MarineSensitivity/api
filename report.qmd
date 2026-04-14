@@ -185,7 +185,8 @@ mapgl::maplibre(
     "Mean score",
     values   = round(score_rng, 1),
     colors   = score_cols,
-    position = "bottom-right")
+    position = "bottom-right") |>
+  mapgl::add_fullscreen_control(position = "top-left")
 ```
 
 ```{r}
