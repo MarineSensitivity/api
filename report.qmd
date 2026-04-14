@@ -19,7 +19,7 @@ format:
     lof: true
     lot: true
   docx:
-    reference-doc: "../workflows/libs/ESP Report Template 2025_1 tech.docx"
+    # reference-doc: "../workflows/libs/ESP Report Template 2025_1 tech.docx"
     toc: true
     toc-depth: 2
     lof: true
