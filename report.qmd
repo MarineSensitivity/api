@@ -100,12 +100,23 @@ areas_data <- purrr::map(areas, function(a) {
     spp    = msens::species_for_cells(con, cells))
 })
 
-# combined sf used by the Map section
+# combined sf used by the Map section — carries label + mean score
+# so the Map can color-code areas by score and label them in place.
 all_areas <- do.call(
   rbind,
   purrr::map(areas_data, function(ad) {
-    sf::st_sf(label = ad$label, geometry = sf::st_geometry(ad$ply))
+    sf::st_sf(
+      label    = ad$label,
+      score    = round(msens::mean_score(ad$scores), 1),
+      geometry = sf::st_geometry(ad$ply))
   }))
+
+# color ramp matches the mapgl app's Spectral fill; range adapts to
+# the areas in this report so a small score spread still uses the
+# full ramp instead of collapsing to one band.
+score_cols <- rev(RColorBrewer::brewer.pal(11, "Spectral"))
+score_rng  <- range(all_areas$score, na.rm = TRUE)
+if (diff(score_rng) == 0) score_rng <- score_rng + c(-0.5, 0.5)
 ```
 
 ## Parameters
@@ -145,16 +156,71 @@ mapgl::maplibre(
   mapgl::add_fill_layer(
     id           = "areas",
     source       = all_areas,
-    fill_color   = "#3388ff",
-    fill_opacity = 0.4,
-    tooltip      = "label")
+    fill_color   = mapgl::interpolate(
+      column = "score",
+      values = seq(score_rng[1], score_rng[2],
+                   length.out = length(score_cols)),
+      stops  = score_cols),
+    fill_opacity = 0.6,
+    tooltip      = mapgl::concat(
+      mapgl::get_column("label"),
+      " — mean score: ",
+      mapgl::get_column("score"))) |>
+  mapgl::add_symbol_layer(
+    id              = "area_labels",
+    source          = sf::st_point_on_surface(all_areas),
+    text_field      = mapgl::get_column("label"),
+    text_size       = 14,
+    text_color      = "#000000",
+    text_halo_color = "#ffffff",
+    text_halo_width = 2) |>
+  mapgl::add_legend(
+    "Mean score",
+    values   = round(score_rng, 1),
+    colors   = score_cols,
+    position = "bottom-right")
 ```
 
 ```{r}
 #| label: map-static
 #| eval: !expr '!is_html'
-#| fig-cap: "Areas of interest."
-msens::ggmap_areas(all_areas)
+#| fig-cap: "Areas of interest, colored by mean sensitivity score."
+bb <- sf::st_bbox(all_areas)
+dx <- (bb["xmax"] - bb["xmin"]) * 0.1
+dy <- (bb["ymax"] - bb["ymin"]) * 0.1
+centroids <- suppressWarnings(sf::st_point_on_surface(all_areas))
+world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+ggplot2::ggplot() +
+  ggplot2::geom_sf(
+    data      = world,
+    fill      = "#e8e4dc",
+    color     = "#b9b3a6",
+    linewidth = 0.2) +
+  ggplot2::geom_sf(
+    data      = all_areas,
+    ggplot2::aes(fill = score),
+    alpha     = 0.75,
+    color     = "#333333",
+    linewidth = 0.4) +
+  ggplot2::geom_sf_text(
+    data     = centroids,
+    ggplot2::aes(label = label),
+    size     = 3,
+    fontface = "bold") +
+  ggplot2::scale_fill_gradientn(
+    colors = score_cols,
+    limits = score_rng,
+    name   = "Mean score") +
+  ggplot2::coord_sf(
+    xlim   = c(bb["xmin"] - dx, bb["xmax"] + dx),
+    ylim   = c(bb["ymin"] - dy, bb["ymax"] + dy),
+    expand = FALSE) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    panel.grid.major = ggplot2::element_blank(),
+    panel.grid.minor = ggplot2::element_blank(),
+    legend.position  = "bottom") +
+  ggplot2::labs(x = NULL, y = NULL)
 ```
 
 ```{r}
