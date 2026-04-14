@@ -8,6 +8,7 @@ params:
   ver:        "v6"
   format:     "html"
   api_base:   "https://api.marinesensitivity.org"
+  mapsp_base: "https://shiny.marinesensitivity.org/mapsp"
 format:
   html:
     toc: true
@@ -45,8 +46,9 @@ suppressPackageStartupMessages({
   library(knitr)
 })
 
-is_html  <- params$format == "html"
-api_base <- params$api_base
+is_html    <- params$format == "html"
+api_base   <- params$api_base
+mapsp_base <- params$mapsp_base
 
 areas <- jsonlite::fromJSON(params$areas_json, simplifyVector = FALSE)
 if (length(areas) == 0) {
@@ -179,11 +181,12 @@ res <- purrr::map_chr(areas_data, function(ad) {
   knitr::knit_child(
     "report_area_child.qmd",
     envir  = rlang::env(
-      ad       = ad,
-      section  = "species",
-      is_html  = is_html,
-      api_base = api_base,
-      ver      = params$ver),
+      ad         = ad,
+      section    = "species",
+      is_html    = is_html,
+      api_base   = api_base,
+      mapsp_base = mapsp_base,
+      ver        = params$ver),
     quiet  = TRUE)
 })
 cat(res, sep = "\n")

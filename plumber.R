@@ -263,6 +263,8 @@ function(req, res) {
 
     api_base <- Sys.getenv(
       "MSENS_API_BASE", "https://api.marinesensitivity.org")
+    mapsp_base <- Sys.getenv(
+      "MSENS_MAPSP_URL", "https://shiny.marinesensitivity.org/mapsp")
     tryCatch(
       quarto::quarto_render(
         input          = file.path(tmp, "report.qmd"),
@@ -272,7 +274,8 @@ function(req, res) {
           areas_json = areas_json,
           ver        = ver,
           format     = format,
-          api_base   = api_base)),
+          api_base   = api_base,
+          mapsp_base = mapsp_base)),
       error = function(e) {
         res$status <<- 500
         stop(glue("quarto_render failed: {conditionMessage(e)}"))
