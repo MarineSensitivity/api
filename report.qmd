@@ -83,20 +83,31 @@ area_to_sf <- function(a) {
 }
 
 con       <- msens::sdm_db_con(version = params$ver, read_only = TRUE)
-r_cell_id <- msens::cell_id_raster()[["cell_id"]]
+# r_cell_id is only needed for drawn polygons (kind == "wkt") — skip
+# the raster load if every area is a Program Area.
+any_wkt   <- any(purrr::map_chr(areas, "kind") == "wkt")
+r_cell_id <- if (any_wkt) msens::cell_id_raster()[["cell_id"]]
 
-# preserve kind/value alongside label so the child chunk can build
-# per-area download URLs for the /species.csv endpoint.
+# Program Areas use the precomputed zone metrics / zone_cell lookups
+# (msens::scores_for_pra, msens::cells_in_pra) so we skip the
+# terra::rasterize() + cell aggregation path entirely. Drawn polygons
+# still need the polygon-intersection pipeline.
 areas_data <- purrr::map(areas, function(a) {
-  ply   <- area_to_sf(a)
-  cells <- msens::cells_in_polygon(ply, r_cell_id)
+  ply <- area_to_sf(a)
+  if (identical(a$kind, "pra")) {
+    cells  <- msens::cells_in_pra(con, a$value)
+    scores <- msens::scores_for_pra(con, a$value)
+  } else {
+    cells  <- msens::cells_in_polygon(ply, r_cell_id)
+    scores <- msens::scores_for_cells(con, cells)
+  }
   list(
     label  = a$label,
     kind   = a$kind,
     value  = a$value,
     ply    = ply,
     cells  = cells,
-    scores = msens::scores_for_cells(con, cells),
+    scores = scores,
     spp    = msens::species_for_cells(con, cells))
 })
 
@@ -123,20 +134,16 @@ if (diff(score_rng) == 0) score_rng <- score_rng + c(-0.5, 0.5)
 
 ```{r}
 #| label: print-params
+# show only the parameters that were actually submitted — derived
+# summaries (n_cells, mean_score, component scores) now live in the
+# Table of Scores below.
 cat(yaml::as.yaml(list(
-  title   = params$title,
-  ver     = params$ver,
-  format  = params$format,
-  n_areas = length(areas),
-  areas   = purrr::map(areas_data, function(ad) {
-    info <- list(
-      label      = ad$label,
-      kind       = ad$kind,
-      n_cells    = nrow(ad$cells),
-      mean_score = round(msens::mean_score(ad$scores), 1))
-    # drawn polygons: show the actual WKT vertices
-    if (identical(ad$kind, "wkt")) info$wkt <- ad$value
-    # Program Area: show the key
+  title  = params$title,
+  ver    = params$ver,
+  format = params$format,
+  areas  = purrr::map(areas_data, function(ad) {
+    info <- list(label = ad$label, kind = ad$kind)
+    if (identical(ad$kind, "wkt")) info$wkt             <- ad$value
     if (identical(ad$kind, "pra")) info$programarea_key <- ad$value
     info
   })
@@ -236,6 +243,34 @@ res <- purrr::map_chr(areas_data, function(ad) {
 })
 cat(res, sep = "\n")
 if (is_html) cat("\n:::\n")
+```
+
+## Table of Scores
+
+```{r}
+#| label: scores-table
+# rows = areas, columns = component scores (wide-pivoted from each
+# ad$scores tibble) plus N cells and the overall mean score. All
+# numeric columns are rounded to 1 decimal for display.
+scores_tbl <- purrr::map_dfr(areas_data, function(ad) {
+  wide <- ad$scores |>
+    dplyr::select(component, score) |>
+    tidyr::pivot_wider(names_from = component, values_from = score)
+  tibble::tibble(
+    Area      = ad$label,
+    `N cells` = nrow(ad$cells),
+    !!!wide,
+    Overall   = msens::mean_score(ad$scores))
+}) |>
+  dplyr::mutate(dplyr::across(
+    where(is.numeric) & !`N cells`,
+    \(x) round(x, 1)))
+
+knitr::kable(
+  scores_tbl,
+  caption  = "Mean component and overall scores per area.",
+  booktabs = TRUE,
+  align    = c("l", "r", rep("r", ncol(scores_tbl) - 2)))
 ```
 
 ```{r}
