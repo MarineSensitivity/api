@@ -22,5 +22,70 @@ if (is_html) {
 
 ```{r}
 #| eval: !expr identical(section, "species")
-msens::tbl_species(ad$spp, interactive = is_html)
+#| results: asis
+d <- ad$spp
+if (nrow(d) == 0) {
+  cat("_No species found for this area._\n\n")
+} else {
+  # * species count by category x extinction-risk code ----
+  n_spp <- dplyr::n_distinct(d$mdl_seq)
+  summary_df <- d |>
+    dplyr::distinct(mdl_seq, sp_cat, er_code) |>
+    dplyr::count(sp_cat, er_code) |>
+    tidyr::pivot_wider(
+      names_from  = er_code,
+      values_from = n,
+      values_fill = 0L) |>
+    dplyr::rename(Category = sp_cat) |>
+    dplyr::arrange(Category)
+  # add Total column + Total row
+  er_cols <- setdiff(names(summary_df), "Category")
+  summary_df$Total <- rowSums(summary_df[, er_cols, drop = FALSE])
+  tot_row <- c(
+    list(Category = "Total"),
+    lapply(summary_df[, c(er_cols, "Total"), drop = FALSE], sum))
+  summary_df <- dplyr::bind_rows(summary_df, tibble::as_tibble(tot_row))
+
+  print(knitr::kable(
+    summary_df,
+    caption   = sprintf(
+      "Species counts by category and extinction-risk code (%d species).",
+      n_spp),
+    booktabs  = TRUE,
+    align     = c("l", rep("r", ncol(summary_df) - 1))))
+  cat("\n\n")
+
+  # * top-20 highest-scoring species ----
+  top20 <- d |>
+    dplyr::distinct(
+      mdl_seq, sp_cat, sp_common, sp_scientific,
+      er_code, er_score, suit_er_area) |>
+    dplyr::arrange(dplyr::desc(suit_er_area)) |>
+    utils::head(20) |>
+    dplyr::transmute(
+      Category   = sp_cat,
+      Common     = sp_common,
+      Scientific = sp_scientific,
+      `ER code`  = er_code,
+      `ER score` = scales::percent(er_score, accuracy = 1),
+      Score      = signif(suit_er_area, 3))
+
+  print(knitr::kable(
+    top20,
+    caption  = "Top 20 highest-scoring species (by habitat-weighted extinction risk).",
+    booktabs = TRUE,
+    align    = c("l", "l", "l", "l", "r", "r")))
+  cat("\n\n")
+
+  # * download full species list (CSV) ----
+  url <- paste0(
+    api_base, "/species.csv",
+    "?ver=",   utils::URLencode(ver,      reserved = TRUE),
+    "&kind=",  utils::URLencode(ad$kind,  reserved = TRUE),
+    "&value=", utils::URLencode(ad$value, reserved = TRUE),
+    "&label=", utils::URLencode(ad$label, reserved = TRUE))
+  cat(sprintf(
+    "[Download full species list (CSV — %d species)](%s)\n\n",
+    n_spp, url))
+}
 ```

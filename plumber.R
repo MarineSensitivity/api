@@ -261,6 +261,8 @@ function(req, res) {
       file.copy(src_f, file.path(tmp, f))
     }
 
+    api_base <- Sys.getenv(
+      "MSENS_API_BASE", "https://api.marinesensitivity.org")
     tryCatch(
       quarto::quarto_render(
         input          = file.path(tmp, "report.qmd"),
@@ -269,7 +271,8 @@ function(req, res) {
           title      = title,
           areas_json = areas_json,
           ver        = ver,
-          format     = format)),
+          format     = format,
+          api_base   = api_base)),
       error = function(e) {
         res$status <<- 500
         stop(glue("quarto_render failed: {conditionMessage(e)}"))
@@ -281,6 +284,74 @@ function(req, res) {
   }
 
   list(url = url_out)
+}
+
+# /species.csv ----
+#*
+#* Download the full species list intersecting a Program Area or a drawn
+#* polygon, as CSV. Reused by the report's per-area download links.
+#*
+#* @param ver data version (default "v6")
+#* @param kind area kind: "pra" (Program Area) or "wkt" (polygon WKT)
+#* @param value programarea_key (for kind=pra) or WKT string (for kind=wkt)
+#* @param label optional human-readable label used for the download filename
+#* @serializer csv
+#* @get /species.csv
+function(req, res, ver = "v6", kind = "", value = "", label = "") {
+  if (!nzchar(kind) || !nzchar(value)) {
+    res$status <- 400
+    return(data.frame(error = "missing kind or value"))
+  }
+  if (!kind %in% c("pra", "wkt")) {
+    res$status <- 400
+    return(data.frame(error = glue("unsupported kind: {kind}")))
+  }
+
+  # build polygon
+  ply <- tryCatch(
+    {
+      if (kind == "pra") {
+        dir_data <- switch(
+          Sys.info()[["sysname"]],
+          "Darwin" = "~/My Drive/projects/msens/data",
+          "Linux"  = "/share/data")
+        gpkg <- file.path(
+          dir_data, "derived", ver,
+          paste0("ply_programareas_2026_", ver, ".gpkg"))
+        sf::st_read(gpkg, quiet = TRUE) |>
+          dplyr::filter(.data$programarea_key == !!value) |>
+          sf::st_geometry() |>
+          sf::st_as_sf()
+      } else {
+        sf::st_as_sfc(value, crs = 4326) |>
+          sf::st_as_sf()
+      }
+    },
+    error = function(e) NULL)
+  if (is.null(ply) || nrow(ply) == 0) {
+    res$status <- 404
+    return(data.frame(error = glue("area not found: kind={kind}, value={value}")))
+  }
+
+  con <- msens::sdm_db_con(version = ver, read_only = TRUE)
+  on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  r_cell_id <- msens::cell_id_raster()[["cell_id"]]
+  cells     <- msens::cells_in_polygon(ply, r_cell_id)
+  spp       <- msens::species_for_cells(con, cells)
+
+  # download filename
+  slug <- label
+  if (!nzchar(slug)) slug <- value
+  slug <- gsub("[^A-Za-z0-9_-]+", "_", slug)
+  slug <- gsub("^_+|_+$", "", slug)
+  if (!nzchar(slug)) slug <- "species"
+  fname <- sprintf("species_%s_%s.csv", slug, ver)
+  res$setHeader(
+    "Content-Disposition",
+    sprintf('attachment; filename="%s"', fname))
+
+  spp
 }
 
 # / home ----

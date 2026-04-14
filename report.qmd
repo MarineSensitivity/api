@@ -7,11 +7,13 @@ params:
   areas_json: "[]"
   ver:        "v6"
   format:     "html"
+  api_base:   "https://api.marinesensitivity.org"
 format:
   html:
     toc: true
     smooth-scroll: true
     embed-resources: true
+    format-links: false
   pdf:
     toc: true
     number-sections: true
@@ -43,7 +45,8 @@ suppressPackageStartupMessages({
   library(knitr)
 })
 
-is_html <- params$format == "html"
+is_html  <- params$format == "html"
+api_base <- params$api_base
 
 areas <- jsonlite::fromJSON(params$areas_json, simplifyVector = FALSE)
 if (length(areas) == 0) {
@@ -77,16 +80,18 @@ area_to_sf <- function(a) {
   }
 }
 
-areas_sf  <- purrr::map(areas, area_to_sf)
-areas_lbl <- purrr::map_chr(areas, "label")
-
 con       <- msens::sdm_db_con(version = params$ver, read_only = TRUE)
 r_cell_id <- msens::cell_id_raster()[["cell_id"]]
 
-areas_data <- purrr::pmap(list(areas_sf, areas_lbl), function(ply, lbl) {
+# preserve kind/value alongside label so the child chunk can build
+# per-area download URLs for the /species.csv endpoint.
+areas_data <- purrr::map(areas, function(a) {
+  ply   <- area_to_sf(a)
   cells <- msens::cells_in_polygon(ply, r_cell_id)
   list(
-    label  = lbl,
+    label  = a$label,
+    kind   = a$kind,
+    value  = a$value,
     ply    = ply,
     cells  = cells,
     scores = msens::scores_for_cells(con, cells),
@@ -96,7 +101,9 @@ areas_data <- purrr::pmap(list(areas_sf, areas_lbl), function(ply, lbl) {
 # combined sf used by the Map section
 all_areas <- do.call(
   rbind,
-  purrr::imap(areas_sf, ~ dplyr::mutate(.x, label = areas_lbl[[.y]])))
+  purrr::map(areas_data, function(ad) {
+    sf::st_sf(label = ad$label, geometry = sf::st_geometry(ad$ply))
+  }))
 ```
 
 ## Parameters
@@ -104,15 +111,22 @@ all_areas <- do.call(
 ```{r}
 #| label: print-params
 cat(yaml::as.yaml(list(
-  title  = params$title,
-  ver    = params$ver,
-  format = params$format,
+  title   = params$title,
+  ver     = params$ver,
+  format  = params$format,
   n_areas = length(areas),
-  areas  = purrr::map(areas_data, ~ list(
-    label      = .x$label,
-    kind       = areas[[which(areas_lbl == .x$label)[1]]]$kind,
-    n_cells    = nrow(.x$cells),
-    mean_score = round(msens::mean_score(.x$scores), 1)))
+  areas   = purrr::map(areas_data, function(ad) {
+    info <- list(
+      label      = ad$label,
+      kind       = ad$kind,
+      n_cells    = nrow(ad$cells),
+      mean_score = round(msens::mean_score(ad$scores), 1))
+    # drawn polygons: show the actual WKT vertices
+    if (identical(ad$kind, "wkt")) info$wkt <- ad$value
+    # Program Area: show the key
+    if (identical(ad$kind, "pra")) info$programarea_key <- ad$value
+    info
+  })
 )))
 ```
 
@@ -159,12 +173,17 @@ if (is_html) cat("\n:::\n")
 ```{r}
 #| label: species-header
 #| output: asis
-cat("\n## Table of Species\n\n")
+cat("\n## Summary of Species\n\n")
 if (is_html) cat("::: {.panel-tabset}\n\n")
 res <- purrr::map_chr(areas_data, function(ad) {
   knitr::knit_child(
     "report_area_child.qmd",
-    envir  = rlang::env(ad = ad, section = "species", is_html = is_html),
+    envir  = rlang::env(
+      ad       = ad,
+      section  = "species",
+      is_html  = is_html,
+      api_base = api_base,
+      ver      = params$ver),
     quiet  = TRUE)
 })
 cat(res, sep = "\n")
