@@ -200,6 +200,36 @@ function(a, b){
   as.numeric(a) + as.numeric(b)
 }
 
+# prune_cache_dir: LRU eviction for the reports cache ----
+# Keeps total on-disk size under `max_bytes` by deleting files with
+# the oldest mtime first. Any paths in `keep` (typically the file
+# we just wrote or touched) are never deleted. Returns the number
+# of files removed.
+prune_cache_dir <- function(dir, max_bytes, keep = character(0)) {
+  if (!dir.exists(dir)) return(invisible(0L))
+  files <- list.files(dir, full.names = TRUE)
+  if (length(files) == 0) return(invisible(0L))
+  info <- file.info(files)
+  info$path <- rownames(info)
+  total <- sum(info$size, na.rm = TRUE)
+  if (total <= max_bytes) return(invisible(0L))
+  info <- info[!info$path %in% keep, , drop = FALSE]
+  info <- info[order(info$mtime), , drop = FALSE]
+  deleted <- 0L
+  for (i in seq_len(nrow(info))) {
+    if (total <= max_bytes) break
+    if (unlink(info$path[i]) == 0) {
+      total   <- total - info$size[i]
+      deleted <- deleted + 1L
+    }
+  }
+  if (deleted > 0L)
+    message(glue(
+      "[prune_cache_dir] removed {deleted} old file(s) from {dir}; ",
+      "total now {round(total / 1024^2, 1)} MiB"))
+  invisible(deleted)
+}
+
 # /report ----
 #* Render a parameterized msens report and return a link to the output
 #*
@@ -247,7 +277,10 @@ function(req, res) {
   url_out  <- paste0(
     "https://file.marinesensitivity.org/reports/", key, ".", ext)
 
-  if (!file.exists(out_file)) {
+  if (file.exists(out_file)) {
+    # cache hit: bump mtime so LRU pruning treats this as recently used
+    Sys.setFileTime(out_file, Sys.time())
+  } else {
     src <- here()
     tmp <- tempfile("rpt_"); dir.create(tmp)
     for (f in c("report.qmd", "report_area_child.qmd")) {
@@ -285,6 +318,15 @@ function(req, res) {
       file.path(tmp, paste0("report.", ext)),
       out_file, overwrite = TRUE)
   }
+
+  # evict oldest reports once total cache size exceeds the limit.
+  # MSENS_REPORTS_MAX_MB overrides the default (500 MiB). The file we
+  # just wrote / touched is passed as `keep` so it's never evicted by
+  # the same request that produced it.
+  max_mb <- suppressWarnings(as.numeric(
+    Sys.getenv("MSENS_REPORTS_MAX_MB", "500")))
+  if (!is.finite(max_mb) || max_mb <= 0) max_mb <- 500
+  prune_cache_dir(out_dir, max_mb * 1024^2, keep = out_file)
 
   list(url = url_out)
 }
