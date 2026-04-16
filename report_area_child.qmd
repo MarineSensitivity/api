@@ -24,30 +24,7 @@ if (is_html) {
 #| eval: !expr identical(section, "species")
 #| results: asis
 
-# helper: wrap a kable in an overflow-x div for HTML, emit as-is for
-# pdf/docx so the native format renders normally.
-emit_table <- function(df, caption, align = NULL) {
-  if (is_html) {
-    tbl <- knitr::kable(
-      df,
-      format     = "html",
-      escape     = FALSE,
-      caption    = caption,
-      align      = align,
-      table.attr = 'class="table table-sm"')
-    cat('<div style="overflow-x: auto; margin-bottom: 1em;">\n\n')
-    cat(as.character(tbl), sep = "\n")
-    cat("\n\n</div>\n\n")
-  } else {
-    cat(knitr::kable(
-      df,
-      caption  = caption,
-      align    = align,
-      booktabs = TRUE,
-      longtable = TRUE), sep = "\n")
-    cat("\n\n")
-  }
-}
+# emit_table is passed from the parent report.qmd via knit_child envir
 
 d <- ad$spp
 if (nrow(d) == 0) {
@@ -58,35 +35,66 @@ if (nrow(d) == 0) {
     er_code = ifelse(is.na(er_code), "NA", er_code))
   n_spp <- dplyr::n_distinct(d$mdl_seq)
 
-  # * species count by category x extinction-risk code ----
-  # column order: compute_er_score() descending, then er_code ascending
-  er_codes_seen   <- sort(unique(d$er_code))
-  er_scores_seen  <- msens::compute_er_score(er_codes_seen)
-  er_codes_sorted <- er_codes_seen[order(-er_scores_seen, er_codes_seen)]
+  # * species count by category x extinction-risk category ----
+  # consolidate individual er_codes into broader categories
+  er_consolidate <- function(code) {
+    authority <- stringr::str_split_i(code, ":", 1)
+    status    <- stringr::str_split_i(code, ":", 2)
+    dplyr::case_when(
+      authority %in% c("FWS", "NMFS") & status == "EN" ~ "USA:EN(100)",
+      authority %in% c("FWS", "NMFS") & status == "TN" ~ "USA:TN(50)",
+      authority %in% c("FWS", "NMFS") & status == "LC" ~ "USA:LC(1)",
+      authority == "IUCN" & status == "CR"              ~ "IUCN:CR(50)",
+      authority == "IUCN" & status == "EN"              ~ "IUCN:EN(25)",
+      authority == "IUCN" & status == "VU"              ~ "IUCN:VU(5)",
+      authority == "IUCN" & status == "NT"              ~ "IUCN:NT(2)",
+      TRUE                                              ~ "other(1)")
+  }
+
+  d <- d |> dplyr::mutate(er_cat = er_consolidate(er_code))
+
+  # fixed column order (left to right by descending score priority)
+  er_cat_order <- c(
+    "USA:EN(100)", "USA:TN(50)", "USA:LC(1)",
+    "IUCN:CR(50)", "IUCN:EN(25)", "IUCN:VU(5)", "IUCN:NT(2)",
+    "other(1)")
+  er_cats_seen <- intersect(er_cat_order, unique(d$er_cat))
 
   summary_df <- d |>
-    dplyr::distinct(mdl_seq, sp_cat, er_code) |>
-    dplyr::count(sp_cat, er_code) |>
+    dplyr::distinct(mdl_seq, sp_cat, er_cat) |>
+    dplyr::count(sp_cat, er_cat) |>
     tidyr::pivot_wider(
-      names_from  = er_code,
+      names_from  = er_cat,
       values_from = n,
       values_fill = 0L) |>
     dplyr::rename(Category = sp_cat) |>
     dplyr::arrange(Category) |>
-    dplyr::relocate(Category, dplyr::all_of(er_codes_sorted))
+    dplyr::relocate(Category, dplyr::all_of(er_cats_seen))
   # add Total column + Total row
-  summary_df$Total <- rowSums(summary_df[, er_codes_sorted, drop = FALSE])
+  summary_df$Total <- rowSums(summary_df[, er_cats_seen, drop = FALSE])
   tot_row <- c(
     list(Category = "Total"),
-    lapply(summary_df[, c(er_codes_sorted, "Total"), drop = FALSE], sum))
+    lapply(summary_df[, c(er_cats_seen, "Total"), drop = FALSE], sum))
   summary_df <- dplyr::bind_rows(summary_df, tibble::as_tibble(tot_row))
+
+  # format counts with thousands comma
+  summary_df <- summary_df |>
+    dplyr::mutate(dplyr::across(
+      where(is.numeric), \(x) scales::comma(x, accuracy = 1)))
 
   emit_table(
     summary_df,
     caption = sprintf(
-      "Species counts by category and extinction-risk code (%d species).",
-      n_spp),
+      "Species counts by category and extinction-risk category (%s species).",
+      scales::comma(n_spp)),
     align = c("l", rep("r", ncol(summary_df) - 1)))
+
+  cat("^[Extinction risk categories consolidated: ",
+      "FWS and NMFS codes combined as USA; ",
+      "parenthetical numbers indicate the extinction risk score (1\u2013100) ",
+      "used in sensitivity weighting. ",
+      "\"other\" includes IUCN:DD, IUCN:LC, and species with no assigned ",
+      "risk code (NA = not available).]\n\n", sep = "")
 
   # * top-20 highest-scoring species ----
   top20 <- d |>
@@ -105,7 +113,7 @@ if (nrow(d) == 0) {
       Scientific = sp_scientific,
       `ER code`  = er_code,
       `ER score` = scales::percent(er_score, accuracy = 1),
-      Score      = signif(suit_er_area, 3))
+      Score      = scales::comma(round(suit_er_area, 0)))
 
   emit_table(
     top20_display,
@@ -120,7 +128,7 @@ if (nrow(d) == 0) {
     "&value=", utils::URLencode(ad$value, reserved = TRUE),
     "&label=", utils::URLencode(ad$label, reserved = TRUE))
   cat(sprintf(
-    "[Download full species list (CSV — %d species)](%s)\n\n",
-    n_spp, url))
+    "[Download full species list (CSV \u2014 %s species)](%s)\n\n",
+    scales::comma(n_spp), url))
 }
 ```

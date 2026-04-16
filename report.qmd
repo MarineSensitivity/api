@@ -42,6 +42,8 @@ suppressPackageStartupMessages({
   library(terra)
   library(purrr)
   library(jsonlite)
+  library(scales)
+  library(stringr)
   library(yaml)
   library(knitr)
 })
@@ -128,8 +130,33 @@ all_areas <- do.call(
 score_cols <- rev(RColorBrewer::brewer.pal(11, "Spectral"))
 score_rng  <- range(all_areas$score, na.rm = TRUE)
 if (diff(score_rng) == 0) score_rng <- score_rng + c(-0.5, 0.5)
+
+# shared table emitter: responsive HTML or booktabs PDF/docx
+emit_table <- function(df, caption, align = NULL) {
+  if (is_html) {
+    tbl <- knitr::kable(
+      df,
+      format     = "html",
+      escape     = FALSE,
+      caption    = caption,
+      align      = align,
+      table.attr = 'class="table table-sm"')
+    cat('<div style="overflow-x: auto; margin-bottom: 1em;">\n\n')
+    cat(as.character(tbl), sep = "\n")
+    cat("\n\n</div>\n\n")
+  } else {
+    cat(knitr::kable(
+      df,
+      caption   = caption,
+      align     = align,
+      booktabs  = TRUE,
+      longtable = TRUE), sep = "\n")
+    cat("\n\n")
+  }
+}
 ```
 
+::: {.callout-note collapse="true"}
 ## Parameters
 
 ```{r}
@@ -150,7 +177,11 @@ cat(yaml::as.yaml(list(
 )))
 ```
 
+:::
+
 ## Map
+
+Areas of interest colored by mean sensitivity score using a Spectral color ramp (red = high, blue = low). Scores are ecoregionally rescaled to a 0--100 range within each BOEM Ecoregion, so they reflect relative sensitivity within a region rather than absolute values across regions.
 
 ```{r}
 #| label: map-html
@@ -197,13 +228,20 @@ bb <- sf::st_bbox(all_areas)
 dx <- (bb["xmax"] - bb["xmin"]) * 0.1
 dy <- (bb["ymax"] - bb["ymin"]) * 0.1
 centroids <- suppressWarnings(sf::st_point_on_surface(all_areas))
-world <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+world     <- rnaturalearth::ne_countries(scale = "medium", returnclass = "sf")
+us_states <- rnaturalearth::ne_states(
+  country = "united states of america", returnclass = "sf")
 ggplot2::ggplot() +
   ggplot2::geom_sf(
     data      = world,
     fill      = "#e8e4dc",
     color     = "#b9b3a6",
     linewidth = 0.2) +
+  ggplot2::geom_sf(
+    data      = us_states,
+    fill      = NA,
+    color     = "#9e9689",
+    linewidth = 0.15) +
   ggplot2::geom_sf(
     data      = all_areas,
     ggplot2::aes(fill = score),
@@ -235,11 +273,18 @@ ggplot2::ggplot() +
 #| label: scores-header
 #| output: asis
 cat("## Plot of Scores\n\n")
+cat("Flower plots where each petal represents a species category ",
+    "(bird, coral, fish, invertebrate, mammal, reptile, other, ",
+    "primary productivity). Petal length reflects the component ",
+    "sensitivity score (0--100) and petal width reflects the component ",
+    "weight. The center value is the weighted mean across all ",
+    "categories.\n\n", sep = "")
 if (is_html) cat("::: {.panel-tabset}\n\n")
 res <- purrr::map_chr(areas_data, function(ad) {
   knitr::knit_child(
     "report_area_child.qmd",
-    envir  = rlang::env(ad = ad, section = "scores", is_html = is_html),
+    envir  = rlang::env(ad = ad, section = "scores", is_html = is_html,
+                        emit_table = emit_table),
     quiet  = TRUE)
 })
 cat(res, sep = "\n")
@@ -248,11 +293,13 @@ if (is_html) cat("\n:::\n")
 
 ## Table of Scores
 
+Mean component and overall sensitivity scores per area of interest, with the count of raster cells (N cells) included in the analysis. Component scores are ecoregionally rescaled (0--100) averages across all cells in each area.
+
 ```{r}
 #| label: scores-table
+#| results: asis
 # rows = areas, columns = component scores (wide-pivoted from each
-# ad$scores tibble) plus N cells and the overall mean score. All
-# numeric columns are rounded to 1 decimal for display.
+# ad$scores tibble) plus N cells and the overall mean score.
 scores_tbl <- purrr::map_dfr(areas_data, function(ad) {
   wide <- ad$scores |>
     dplyr::select(component, score) |>
@@ -265,19 +312,23 @@ scores_tbl <- purrr::map_dfr(areas_data, function(ad) {
 }) |>
   dplyr::mutate(dplyr::across(
     where(is.numeric) & !`N cells`,
-    \(x) round(x, 1)))
+    \(x) round(x, 0))) |>
+  dplyr::mutate(`N cells` = scales::comma(`N cells`))
 
-knitr::kable(
+emit_table(
   scores_tbl,
-  caption  = "Mean component and overall scores per area.",
-  booktabs = TRUE,
-  align    = c("l", "r", rep("r", ncol(scores_tbl) - 2)))
+  caption = "Mean component and overall scores per area.",
+  align   = c("l", "r", rep("r", ncol(scores_tbl) - 2)))
 ```
 
 ```{r}
 #| label: species-header
 #| output: asis
 cat("\n## Summary of Species\n\n")
+cat("Species counts by category and extinction risk, the top 20 ",
+    "highest-scoring species (ranked by habitat-weighted extinction ",
+    "risk), and a link to download the full species list as CSV.\n\n",
+    sep = "")
 if (is_html) cat("::: {.panel-tabset}\n\n")
 res <- purrr::map_chr(areas_data, function(ad) {
   knitr::knit_child(
@@ -286,6 +337,7 @@ res <- purrr::map_chr(areas_data, function(ad) {
       ad         = ad,
       section    = "species",
       is_html    = is_html,
+      emit_table = emit_table,
       api_base   = api_base,
       mapsp_base = mapsp_base,
       ver        = params$ver),
@@ -299,3 +351,14 @@ if (is_html) cat("\n:::\n")
 #| include: false
 DBI::dbDisconnect(con, shutdown = TRUE)
 ```
+
+::: {.callout-caution collapse="true"}
+## Software
+
+```{r}
+#| label: session-info
+#| comment: ""
+devtools::session_info()
+```
+
+:::

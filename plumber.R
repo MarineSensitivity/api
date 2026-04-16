@@ -268,14 +268,15 @@ function(req, res) {
   }
 
   areas_json <- jsonlite::toJSON(areas, auto_unbox = TRUE)
-  ext <- c(html = "html", pdf = "pdf", docx = "docx")[[format]]
-  key <- digest::digest(list(title, areas_json, ver, format))
+  ext   <- c(html = "html", pdf = "pdf", docx = "docx")[[format]]
+  key   <- substr(digest::digest(list(title, areas_json, ver, format)), 1, 8)
+  fname <- paste0("MarineSensitivity.org_", key, ".", ext)
 
   out_dir  <- "/share/public/reports"
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-  out_file <- file.path(out_dir, paste0(key, ".", ext))
+  out_file <- file.path(out_dir, fname)
   url_out  <- paste0(
-    "https://file.marinesensitivity.org/reports/", key, ".", ext)
+    "https://file.marinesensitivity.org/reports/", fname)
 
   if (file.exists(out_file)) {
     # cache hit: bump mtime so LRU pruning treats this as recently used
