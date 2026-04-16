@@ -156,6 +156,8 @@ emit_table <- function(df, caption, align = NULL) {
 }
 ```
 
+This report was generated via input parameters submitted by the app at [app.marinesensitivity.org/mapgl](https://app.marinesensitivity.org/mapgl). For more information about this project please visit [MarineSensitivity.org](https://MarineSensitivity.org), where you can find the latest documentation, apps and log of changes.
+
 ::: {.callout-note collapse="true"}
 ## Parameters
 
@@ -327,8 +329,12 @@ emit_table(
 cat("\n## Summary of Species\n\n")
 cat("Species counts by category and extinction risk, the top 20 ",
     "highest-scoring species (ranked by habitat-weighted extinction ",
-    "risk), and a link to download the full species list as CSV.\n\n",
-    sep = "")
+    "risk), and a link to download the full species list as CSV. ",
+    "Extinction risk categories are consolidated: FWS and NMFS codes ",
+    "combined as USA; parenthetical numbers indicate the extinction ",
+    "risk score (1\u2013100) used in sensitivity weighting. ",
+    "\"other\" includes IUCN:DD, IUCN:LC, and species with no ",
+    "assigned risk code (NA = not available).\n\n", sep = "")
 if (is_html) cat("::: {.panel-tabset}\n\n")
 res <- purrr::map_chr(areas_data, function(ad) {
   knitr::knit_child(

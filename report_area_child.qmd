@@ -89,13 +89,6 @@ if (nrow(d) == 0) {
       scales::comma(n_spp)),
     align = c("l", rep("r", ncol(summary_df) - 1)))
 
-  cat("^[Extinction risk categories consolidated: ",
-      "FWS and NMFS codes combined as USA; ",
-      "parenthetical numbers indicate the extinction risk score (1\u2013100) ",
-      "used in sensitivity weighting. ",
-      "\"other\" includes IUCN:DD, IUCN:LC, and species with no assigned ",
-      "risk code (NA = not available).]\n\n", sep = "")
-
   # * top-20 highest-scoring species ----
   top20 <- d |>
     dplyr::distinct(
