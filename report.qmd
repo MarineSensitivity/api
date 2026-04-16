@@ -271,16 +271,14 @@ ggplot2::ggplot() +
   ggplot2::labs(x = NULL, y = NULL)
 ```
 
+## Plot of Scores
+
+Flower plots where each petal represents a species category (bird, coral, fish, invertebrate, mammal, reptile, other, primary productivity). Petal length reflects the component sensitivity score (0--100) and petal width reflects the component weight. The center value is the weighted mean across all categories.
+
 ```{r}
 #| label: scores-header
 #| output: asis
-cat("## Plot of Scores\n\n")
-cat("Flower plots where each petal represents a species category ",
-    "(bird, coral, fish, invertebrate, mammal, reptile, other, ",
-    "primary productivity). Petal length reflects the component ",
-    "sensitivity score (0--100) and petal width reflects the component ",
-    "weight. The center value is the weighted mean across all ",
-    "categories.\n\n", sep = "")
+
 if (is_html) cat("::: {.panel-tabset}\n\n")
 res <- purrr::map_chr(areas_data, function(ad) {
   knitr::knit_child(
@@ -323,18 +321,16 @@ emit_table(
   align   = c("l", "r", rep("r", ncol(scores_tbl) - 2)))
 ```
 
+## Summary of Species
+
+Species counts by category and extinction risk, the top 20 highest-scoring species (ranked by habitat-weighted extinction risk), and a link to download the full species list as CSV. 
+
+Note: Extinction risk categories are consolidated: 'FWS' and 'NMFS' codes combined to 'USA'; parenthetical numbers indicate the extinction risk score (1–100) used in sensitivity weighting. The "other" category includes "IUCN:DD" (Data Deficient), IUCN:LC (Least Concern), and species with no assigned risk code.
+
 ```{r}
 #| label: species-header
 #| output: asis
-cat("\n## Summary of Species\n\n")
-cat("Species counts by category and extinction risk, the top 20 ",
-    "highest-scoring species (ranked by habitat-weighted extinction ",
-    "risk), and a link to download the full species list as CSV. ",
-    "Extinction risk categories are consolidated: FWS and NMFS codes ",
-    "combined as USA; parenthetical numbers indicate the extinction ",
-    "risk score (1\u2013100) used in sensitivity weighting. ",
-    "\"other\" includes IUCN:DD, IUCN:LC, and species with no ",
-    "assigned risk code (NA = not available).\n\n", sep = "")
+
 if (is_html) cat("::: {.panel-tabset}\n\n")
 res <- purrr::map_chr(areas_data, function(ad) {
   knitr::knit_child(
