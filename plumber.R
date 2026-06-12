@@ -400,6 +400,32 @@ function(req, res, ver = "v6", kind = "", value = "", label = "") {
   spp
 }
 
+# /stats.json ----
+#* Current species & zone counts for a data version (default: the deployed `latest`).
+#* Used by the docs to inline live numbers based on the current database version.
+#* @param ver data version ("latest", "v7", ...)
+#* @get /stats.json
+#* @serializer unboxedJSON
+function(ver = "latest") {
+  con_v <- msens::sdm_db_con(version = ver, read_only = TRUE)
+  on.exit(try(DBI::dbDisconnect(con_v, shutdown = TRUE), silent = TRUE), add = TRUE)
+  q1 <- function(sql) as.integer(DBI::dbGetQuery(con_v, sql)[[1]][1])
+  real_ver <- tryCatch(
+    basename(dirname(normalizePath(msens::sdm_db_path(ver)))),
+    error = function(e) ver)
+  list(
+    version                 = real_ver,
+    total_taxa              = q1("SELECT count(*) FROM taxon"),
+    valid_species           = q1("SELECT count(*) FROM taxon WHERE is_ok"),
+    species_full_study_area = q1("SELECT count(DISTINCT mdl_seq) FROM zone_taxon WHERE zone_fld='subregion_key' AND zone_value='FULL'"),
+    species_program_areas   = q1("SELECT count(DISTINCT mdl_seq) FROM zone_taxon WHERE zone_fld='programarea_key'"),
+    n_program_areas         = q1("SELECT count(*) FROM zone WHERE fld='programarea_key'"),
+    n_ecoregions            = q1("SELECT count(*) FROM zone WHERE fld='ecoregion_key'"),
+    n_datasets              = q1("SELECT count(*) FROM dataset"),
+    n_cells                 = q1("SELECT count(*) FROM cell"),
+    updated                 = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"))
+}
+
 # / home ----
 #* redirect to the swagger interface
 #* @get /
