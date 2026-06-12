@@ -413,6 +413,42 @@ function(ver = "latest") {
   real_ver <- tryCatch(
     basename(dirname(normalizePath(msens::sdm_db_path(ver)))),
     error = function(e) ver)
+
+  # cumulative `is_ok` filter funnel (counts surviving after each gate, in the
+  # same order applied in merge_models.qmd), then the spatial Program-Area subset.
+  fc <- DBI::dbGetQuery(con_v, "
+    WITH t AS (
+      SELECT *, (mdl_seq IN (SELECT DISTINCT mdl_seq FROM model_cell WHERE mdl_seq IS NOT NULL)) AS has_cells
+      FROM taxon),
+    g AS (SELECT
+      taxon_id IS NOT NULL AS p1,
+      mdl_seq  IS NOT NULL AS p2,
+      redlist_code IS DISTINCT FROM 'EX' AS p3,
+      (worms_id IS NULL OR worms_is_extinct IS NOT TRUE)  AS p3b,
+      (worms_id IS NULL OR worms_is_marine  IS NOT FALSE) AS p4,
+      (taxon_authority <> 'worms' OR worms_taxonomic_status IS NULL
+         OR worms_taxonomic_status IN ('accepted','alternative representation')) AS p5,
+      NOT (taxon_authority='worms' AND COALESCE(sp_cat,'') = 'reptile') AS p5b,
+      has_cells AS p6 FROM t)
+    SELECT
+      count(*) s0, count(*) FILTER (WHERE p1) s1, count(*) FILTER (WHERE p1 AND p2) s2,
+      count(*) FILTER (WHERE p1 AND p2 AND p3 AND p3b) s3,
+      count(*) FILTER (WHERE p1 AND p2 AND p3 AND p3b AND p4) s4,
+      count(*) FILTER (WHERE p1 AND p2 AND p3 AND p3b AND p4 AND p5 AND p5b) s5,
+      count(*) FILTER (WHERE p1 AND p2 AND p3 AND p3b AND p4 AND p5 AND p5b AND p6) s6
+    FROM g")
+  rem <- as.integer(c(fc$s0, fc$s1, fc$s2, fc$s3, fc$s4, fc$s5, fc$s6,
+    q1("SELECT count(DISTINCT mdl_seq) FROM zone_taxon WHERE zone_fld='programarea_key'")))
+  funnel <- data.frame(
+    step      = seq_along(rem),
+    filter    = c("Source taxa (all datasets)", "Resolved taxon ID",
+                  "Has a merged model (distribution)", "Not extinct", "Marine",
+                  "Accepted taxonomy (excl. non-turtle reptiles)",
+                  "Mapped to ≥1 cell — valid (is_ok)",
+                  "Within BOEM Program Areas (spatial subset)"),
+    remaining = rem,
+    removed   = as.integer(c(0L, head(rem, -1) - tail(rem, -1))))
+
   list(
     version                 = real_ver,
     total_taxa              = q1("SELECT count(*) FROM taxon"),
@@ -423,6 +459,7 @@ function(ver = "latest") {
     n_ecoregions            = q1("SELECT count(*) FROM zone WHERE fld='ecoregion_key'"),
     n_datasets              = q1("SELECT count(*) FROM dataset"),
     n_cells                 = q1("SELECT count(*) FROM cell"),
+    funnel                  = funnel,
     updated                 = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"))
 }
 
