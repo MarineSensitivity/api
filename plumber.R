@@ -1,5 +1,7 @@
+library(DBI)
 library(digest)
 library(dplyr)
+library(duckdb)
 library(glue)
 library(here)
 library(httr2)
@@ -8,7 +10,27 @@ library(plumber)
 library(quarto)
 library(stringr)
 
-source(here("../workflows/libs/db.R")) # define: con
+# postgres (retired stack) — connect lazily so the API boots without postgis.
+# only /species_by_feature uses `con`; it errors at call time if unavailable.
+con <- NULL
+try(suppressWarnings(source(here("../workflows/libs/db.R"))), silent = TRUE)  # sets `con` if postgis up
+if (!inherits(con, "DBIConnection"))
+  message("postgres unavailable (retired stack); /species_by_feature disabled")
+
+# obisindicators SQL builders (single source of truth) for the /h3 endpoint.
+# source the two R files directly (need only glue) — lighter than installing the
+# full package (gsl/h3). taxon.R first: obis_h3t_sql(aphiaid=) calls its helper.
+obis_r <- Sys.glob(c(
+  "/share/github/marinebon/obisindicators/R/h3t.R",
+  "../../marinebon/obisindicators/R/h3t.R",
+  "~/Github/marinebon/obisindicators/R/h3t.R"))[1]
+if (!is.na(obis_r)) {
+  source(file.path(dirname(obis_r), "taxon.R"))
+  source(obis_r)
+} else {
+  message("obisindicators/R not found; /h3 endpoint disabled")
+}
+OBIS_DUCKDB <- Sys.getenv("MSENS_OBIS_DUCKDB", "/share/data/obis/obis_h3.duckdb")
 
 #* @apiTitle MarineSensitivity Custom API
 
@@ -461,6 +483,145 @@ function(ver = "latest") {
     n_cells                 = q1("SELECT count(*) FROM cell"),
     funnel                  = funnel,
     updated                 = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"))
+}
+
+# /h3 ----
+#* H3-hexagon OBIS summary for a taxon / indicator, any extent, many formats
+#*
+#* Summarizes the OBIS snapshot to H3 hexagons at a chosen resolution, filtered
+#* by taxon, and returns it in the requested spatial/tabular format. Filtering
+#* by `aphiaid` includes **all descendant taxa at any rank** (resolved from the
+#* WoRMS `taxon` table, e.g. `2688` = Infraorder Cetacea). Runs read-only over
+#* the same DuckDB store as the `h3t` tile service; the SQL is built by
+#* `obisindicators::obis_h3t_sql()` / `obis_spue_sql()`.
+#*
+#* @param indicator one of `n` (# records), `es` (ES50), `sp` (richness),
+#*   `shannon`. Default `n`.
+#* @param aphiaid optional comma-separated WoRMS AphiaID(s); includes every
+#*   descendant taxon. Takes precedence over `taxon`.
+#* @param effort_aphiaid optional AphiaID(s); when set (with `aphiaid`), returns
+#*   the SPUE effort proxy = records(`aphiaid`) / records(`effort_aphiaid`).
+#* @param taxon optional `rank:value` (e.g. `class:Aves`); ignored if `aphiaid`.
+#* @param level H3 resolution 1-7 (default 3). Higher = finer hexagons.
+#* @param bbox optional lon/lat extent `xmin,ymin,xmax,ymax` (default global).
+#* @param years optional `min,max` year range.
+#* @param format `geojson` | `gpkg` | `csv` | `parquet` | `geoparquet`
+#*   (default `geojson`).
+#* @serializer contentType list(type = "application/octet-stream")
+#* @get /h3
+function(req, res, indicator = "n", aphiaid = "", effort_aphiaid = "",
+         taxon = "", level = 3, bbox = "", years = "", format = "geojson") {
+
+  fail <- function(status, msg) {
+    res$status <- status
+    charToRaw(jsonlite::toJSON(list(error = msg), auto_unbox = TRUE))
+  }
+  if (!exists("obis_h3t_sql"))
+    return(fail(500, "obisindicators SQL builders not loaded on server"))
+  if (!file.exists(OBIS_DUCKDB))
+    return(fail(500, paste("store not found:", OBIS_DUCKDB)))
+
+  if (!indicator %in% c("n", "es", "sp", "shannon"))
+    return(fail(400, "indicator must be one of n, es, sp, shannon"))
+  fmt <- tolower(format)
+  if (!fmt %in% c("geojson", "gpkg", "csv", "parquet", "geoparquet"))
+    return(fail(400, "format must be geojson, gpkg, csv, parquet, or geoparquet"))
+  level <- suppressWarnings(as.integer(level))
+  if (is.na(level) || level < 1 || level > 7)
+    return(fail(400, "level must be an integer 1-7"))
+
+  parse_ids <- function(s) {
+    if (!nzchar(s)) return(NULL)
+    v <- suppressWarnings(as.integer(strsplit(trimws(s), "\\s*,\\s*")[[1]]))
+    v <- v[!is.na(v)]
+    if (length(v)) v else NULL
+  }
+  aph <- parse_ids(aphiaid)
+  eff <- parse_ids(effort_aphiaid)
+  yrs <- if (nzchar(years)) {
+    y <- suppressWarnings(as.integer(strsplit(trimws(years), "\\s*,\\s*")[[1]]))
+    if (length(y) == 2) y else NULL
+  } else NULL
+  tx <- NULL
+  if (nzchar(taxon) && grepl(":", taxon, fixed = TRUE)) {
+    p  <- strsplit(taxon, ":", fixed = TRUE)[[1]]
+    tx <- setNames(list(p[2]), p[1])
+  }
+
+  # inner SQL (fixed res = level): SPUE if an effort taxon is given, else the
+  # chosen indicator over the all-taxa / taxon / aphiaid-subtree store.
+  inner <- tryCatch({
+    if (!is.null(eff)) {
+      if (is.null(aph))
+        stop("effort_aphiaid requires aphiaid (the target/numerator taxon)")
+      obis_spue_sql(num_aphiaid = aph, den_aphiaid = eff,
+                    res_max = level, res_placeholder = as.character(level))
+    } else {
+      obis_h3t_sql(indicator = indicator, taxon = tx, aphiaid = aph,
+                   years = yrs, res_max = level,
+                   res_placeholder = as.character(level))
+    }
+  }, error = function(e) e)
+  if (inherits(inner, "error")) return(fail(400, conditionMessage(inner)))
+
+  where_bbox <- ""
+  if (nzchar(bbox)) {
+    bb <- suppressWarnings(as.numeric(strsplit(trimws(bbox), "\\s*,\\s*")[[1]]))
+    if (length(bb) != 4 || anyNA(bb))
+      return(fail(400, "bbox must be xmin,ymin,xmax,ymax (lon/lat)"))
+    where_bbox <- glue(
+      "WHERE h3_cell_to_lng(cell_id) BETWEEN {bb[1]} AND {bb[3]} ",
+      "AND h3_cell_to_lat(cell_id) BETWEEN {bb[2]} AND {bb[4]}")
+  }
+
+  dbc <- tryCatch(
+    DBI::dbConnect(duckdb::duckdb(), dbdir = OBIS_DUCKDB, read_only = TRUE),
+    error = function(e) e)
+  if (inherits(dbc, "error")) return(fail(500, conditionMessage(dbc)))
+  on.exit(try(DBI::dbDisconnect(dbc, shutdown = TRUE), silent = TRUE), add = TRUE)
+
+  out <- tryCatch({
+    DBI::dbExecute(dbc,
+      "INSTALL h3 FROM community; LOAD h3; INSTALL spatial; LOAD spatial;")
+    DBI::dbExecute(dbc, glue("CREATE TEMP TABLE _q AS {inner}"))
+
+    # cast value->DOUBLE, n->BIGINT: SUM() yields HUGEINT, which the GDAL
+    # (GeoJSON/GPKG) writer rejects ("decimal precision > 19").
+    geo_sel <- glue(
+      "SELECT h3_h3_to_string(cell_id) AS h3_id, ",
+      "value::DOUBLE AS value, n::BIGINT AS n, ",
+      "ST_GeomFromText(h3_cell_to_boundary_wkt(cell_id)) AS geometry ",
+      "FROM _q {where_bbox}")
+    flat_sel <- glue(
+      "SELECT h3_h3_to_string(cell_id) AS h3_id, ",
+      "h3_cell_to_lng(cell_id) AS lng, h3_cell_to_lat(cell_id) AS lat, ",
+      "value::DOUBLE AS value, n::BIGINT AS n, ",
+      "h3_cell_to_boundary_wkt(cell_id) AS geom_wkt ",
+      "FROM _q {where_bbox}")
+
+    ext <- c(geojson = "geojson", gpkg = "gpkg", csv = "csv",
+             parquet = "parquet", geoparquet = "parquet")[[fmt]]
+    tmp <- tempfile(fileext = paste0(".", ext))
+    copy_sql <- switch(fmt,
+      csv        = glue("COPY ({flat_sel}) TO '{tmp}' (FORMAT CSV, HEADER)"),
+      parquet    = glue("COPY ({flat_sel}) TO '{tmp}' (FORMAT PARQUET)"),
+      geoparquet = glue("COPY ({geo_sel})  TO '{tmp}' (FORMAT PARQUET)"),
+      geojson    = glue("COPY ({geo_sel})  TO '{tmp}' (FORMAT GDAL, DRIVER 'GeoJSON', SRS 'EPSG:4326')"),
+      gpkg       = glue("COPY ({geo_sel})  TO '{tmp}' (FORMAT GDAL, DRIVER 'GPKG', SRS 'EPSG:4326')"))
+    DBI::dbExecute(dbc, copy_sql)
+    list(tmp = tmp, ext = ext)
+  }, error = function(e) e)
+  if (inherits(out, "error")) return(fail(400, conditionMessage(out)))
+
+  tag <-
+    if (!is.null(eff))       sprintf("spue_%s_over_%s", aph[1], eff[1]) else
+    if (!is.null(aph))       paste0("aphia", aph[1])                    else
+    if (!is.null(tx))        paste0(names(tx), "-", tx[[1]])            else indicator
+  fname <- sprintf("obis_h3_%s_res%d.%s",
+                   gsub("[^A-Za-z0-9_-]+", "_", tag), level, out$ext)
+  res$setHeader("Content-Disposition",
+                sprintf('attachment; filename="%s"', fname))
+  readBin(out$tmp, "raw", n = file.info(out$tmp)$size)
 }
 
 # / home ----
