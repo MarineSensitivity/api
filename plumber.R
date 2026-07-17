@@ -551,15 +551,20 @@ function(req, res, indicator = "n", aphiaid = "", effort_aphiaid = "",
   # inner SQL (fixed res = level): SPUE if an effort taxon is given, else the
   # chosen indicator over the all-taxa / taxon / aphiaid-subtree store.
   inner <- tryCatch({
+    # bbox_placeholder = "" : this endpoint executes the SQL directly (no h3t
+    # server to substitute {{bbox}}) and does its own post-aggregation bbox
+    # filter below (where_bbox); res is baked in via res_placeholder = level.
     if (!is.null(eff)) {
       if (is.null(aph))
         stop("effort_aphiaid requires aphiaid (the target/numerator taxon)")
       obis_spue_sql(num_aphiaid = aph, den_aphiaid = eff,
-                    res_max = level, res_placeholder = as.character(level))
+                    res_max = level, res_placeholder = as.character(level),
+                    bbox_placeholder = "")
     } else {
       obis_h3t_sql(indicator = indicator, taxon = tx, aphiaid = aph,
                    years = yrs, res_max = level,
-                   res_placeholder = as.character(level))
+                   res_placeholder = as.character(level),
+                   bbox_placeholder = "")
     }
   }, error = function(e) e)
   if (inherits(inner, "error")) return(fail(400, conditionMessage(inner)))
