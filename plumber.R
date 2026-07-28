@@ -404,9 +404,13 @@ function(req, res, ver = "v6", kind = "", value = "", label = "") {
   con <- msens::sdm_db_con(version = ver, read_only = TRUE)
   on.exit(try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE), add = TRUE)
 
-  r_cell_id <- msens::cell_id_raster()[["cell_id"]]
-  cells     <- msens::cells_in_polygon(ply, r_cell_id)
-  spp       <- msens::species_for_cells(con, cells)
+  # pass the CONNECTION, not a raster: cells_in_polygon() then reads the grid
+  # from the database being queried (v8 = SQL bbox on `cell`.lon/lat; v7 = the
+  # 0-360 raster). Handing it cell_id_raster() unconditionally was the bug —
+  # against v8 it resolved a California polygon to Arctic cells, so this
+  # endpoint returned an empty species list with no error.
+  cells <- msens::cells_in_polygon(ply, con)
+  spp   <- msens::species_for_cells(con, cells)
 
   # download filename
   slug <- label

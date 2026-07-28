@@ -85,10 +85,13 @@ area_to_sf <- function(a) {
 }
 
 con       <- msens::sdm_db_con(version = params$ver, read_only = TRUE)
-# r_cell_id is only needed for drawn polygons (kind == "wkt") — skip
-# the raster load if every area is a Program Area.
-any_wkt   <- any(purrr::map_chr(areas, "kind") == "wkt")
-r_cell_id <- if (any_wkt) msens::cell_id_raster()[["cell_id"]]
+# Drawn polygons (kind == "wkt") resolve to cells via msens::cells_in_polygon(),
+# which is handed the CONNECTION rather than a raster: it then reads the grid
+# from the database it is querying and cannot disagree with it. On v8 that is a
+# SQL bbox select on `cell` (lon/lat) — ~0.02 s, feeding the cell-oriented
+# cell_model; on v7 it falls back to the 0-360 raster that IS v7's grid.
+# Passing cell_id_raster() unconditionally was the bug: against v8 it returned
+# ARCTIC cells for a California polygon, so drawn-area reports came back empty.
 
 # Program Areas use the precomputed zone metrics / zone_cell lookups
 # (msens::scores_for_pra, msens::cells_in_pra) so we skip the
@@ -100,7 +103,7 @@ areas_data <- purrr::map(areas, function(a) {
     cells  <- msens::cells_in_pra(con, a$value)
     scores <- msens::scores_for_pra(con, a$value)
   } else {
-    cells  <- msens::cells_in_polygon(ply, r_cell_id)
+    cells  <- msens::cells_in_polygon(ply, con)
     scores <- msens::scores_for_cells(con, cells)
   }
   list(
