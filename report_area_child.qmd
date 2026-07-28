@@ -33,7 +33,12 @@ if (nrow(d) == 0) {
   # normalize NA er_code so pivot_wider and compute_er_score behave
   d <- d |> dplyr::mutate(
     er_code = ifelse(is.na(er_code), "NA", er_code))
-  n_spp <- dplyr::n_distinct(d$mdl_seq)
+  # msens::species_for_cells() aliases the model id to `mdl_key` for EVERY
+  # version — `CAST(mc.{mkey} AS VARCHAR) AS mdl_key` — so v7's integer mdl_seq
+  # arrives here as a string under that same name. This file used to read
+  # `mdl_seq`, which worked only against the ancient msens the API container had
+  # pinned; upgrading it made every report fail with "mdl_seq not found".
+  n_spp <- dplyr::n_distinct(d$mdl_key)
 
   # * species count by category x extinction-risk category ----
   # consolidate individual er_codes into broader categories
@@ -61,7 +66,7 @@ if (nrow(d) == 0) {
   er_cats_seen <- intersect(er_cat_order, unique(d$er_cat))
 
   summary_df <- d |>
-    dplyr::distinct(mdl_seq, sp_cat, er_cat) |>
+    dplyr::distinct(mdl_key, sp_cat, er_cat) |>
     dplyr::count(sp_cat, er_cat) |>
     tidyr::pivot_wider(
       names_from  = er_cat,
@@ -92,7 +97,7 @@ if (nrow(d) == 0) {
   # * top-20 highest-scoring species ----
   top20 <- d |>
     dplyr::distinct(
-      mdl_seq, sp_cat, sp_common, sp_scientific,
+      mdl_key, sp_cat, sp_common, sp_scientific,
       er_code, er_score, suit_er_area) |>
     dplyr::arrange(dplyr::desc(suit_er_area)) |>
     utils::head(20)
@@ -100,9 +105,15 @@ if (nrow(d) == 0) {
   top20_display <- top20 |>
     dplyr::transmute(
       Category   = sp_cat,
+      # the species app's deep-link parameter is version-specific: v8 takes
+      # ?mdl_key=<string> (e.g. "ms_merge|BOTW:22694927", so URL-encode the `|`
+      # and `:`), v7 takes ?mdl_seq=<int>.
       Common     = if (is_html) sprintf(
-        '<a href="%s/?mdl_seq=%d" target="_blank">%s</a>',
-        mapsp_base, mdl_seq, sp_common) else sp_common,
+        '<a href="%s/?%s=%s" target="_blank">%s</a>',
+        mapsp_base,
+        if (identical(ver, "v8")) "mdl_key" else "mdl_seq",
+        vapply(mdl_key, utils::URLencode, character(1), reserved = TRUE),
+        sp_common) else sp_common,
       Scientific = sp_scientific,
       `ER code`  = er_code,
       `ER score` = scales::percent(er_score, accuracy = 1),

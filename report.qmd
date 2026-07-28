@@ -8,7 +8,7 @@ params:
   ver:        "v6"
   format:     "html"
   api_base:   "https://api.marinesensitivity.org"
-  mapsp_base: "https://shiny.marinesensitivity.org/mapsp"
+  mapsp_base: ""
 format:
   html:
     toc: true
@@ -50,7 +50,15 @@ suppressPackageStartupMessages({
 
 is_html    <- params$format == "html"
 api_base   <- params$api_base
-mapsp_base <- params$mapsp_base
+# species-app base, derived from the data version unless explicitly overridden.
+# The two generations are separate apps with different deep-link parameters:
+# v8 = /species_v8 with ?mdl_key=<string>, v7 = /species with ?mdl_seq=<int>.
+# (The old default pointed at shiny.marinesensitivity.org/mapsp, a host the apps
+# moved off of, so every species link in a report 404'd.)
+mapsp_base <- if (!is.null(params$mapsp_base) && nzchar(params$mapsp_base))
+  params$mapsp_base else
+  sprintf("https://app.marinesensitivity.org/species%s",
+          if (identical(params$ver, "v8")) "_v8" else "")
 
 areas <- jsonlite::fromJSON(params$areas_json, simplifyVector = FALSE)
 if (length(areas) == 0) {
