@@ -319,8 +319,13 @@ function(req, res) {
 
     api_base <- Sys.getenv(
       "MSENS_API_BASE", "https://api.marinesensitivity.org")
-    mapsp_base <- Sys.getenv(
-      "MSENS_MAPSP_URL", "https://shiny.marinesensitivity.org/mapsp")
+    # deliberately "" unless MSENS_MAPSP_URL is set: report.qmd then derives the
+    # species-app base from `ver`, since the two generations are separate apps
+    # (v8 = /species_v8 with ?mdl_key=<string>, v7 = /species with ?mdl_seq=<int>).
+    # This used to default to shiny.marinesensitivity.org/mapsp — a host the apps
+    # moved off — and passing it explicitly overrode the version-aware default,
+    # so every species link in a report 404'd.
+    mapsp_base <- Sys.getenv("MSENS_MAPSP_URL", "")
     tryCatch(
       quarto::quarto_render(
         input          = file.path(tmp, "report.qmd"),
